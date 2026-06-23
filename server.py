@@ -367,37 +367,39 @@ async def fbs_act_check_status(id: int) -> str:
     return await _post("/v2/posting/fbs/act/check-status", {"id": id})
 
 
-# ── FBO Orders (Fulfilled by Ozon) ──────────────────────────────────────────
-
+# ── FBO Postings ────────────────────────────────────────────────────────────
 
 @mcp.tool()
 async def fbo_posting_list(
     limit: int = 50,
-    offset: int = 0,
-    since: str = "",
-    to: str = "",
-    status: str = "",
-    sort_by: str = "created_at",
+    cursor: str = "",
+    filter: dict | None = None,
     sort_dir: str = "ASC",
+    translit: bool = False,
+    with_data: dict | None = None,
 ) -> str:
-    """List FBO shipments. Dates in RFC3339 format."""
-    body: dict = {"limit": limit, "offset": offset, "dir": sort_dir}
-    filt: dict = {}
-    if since:
-        filt["since"] = since
-    if to:
-        filt["to"] = to
-    if status:
-        filt["status"] = status
-    if filt:
-        body["filter"] = filt
-    return await _post("/v2/posting/fbo/list", body)
+    """List FBO shipments. Use filter for since, to, statuses, and posting_numbers. Dates in RFC3339 format."""
+    body: dict = {"limit": limit, "cursor": cursor, "sort_dir": sort_dir, "translit": translit}
+    if filter:
+        body["filter"] = filter
+    if with_data:
+        body["with"] = with_data
+    return await _post("/v3/posting/fbo/list", body)
 
 
 @mcp.tool()
-async def fbo_posting_get(posting_number: str) -> str:
-    """Get detailed info about a single FBO shipment."""
-    return await _post("/v2/posting/fbo/get", {"posting_number": posting_number})
+async def fbo_posting_get(posting_number: str, translit: bool = False, with_data: dict | None = None) -> str:
+    """Get detailed info about a single FBO shipment by posting number."""
+    body: dict = {"posting_number": posting_number, "translit": translit}
+    if with_data:
+        body["with"] = with_data
+    return await _post("/v2/posting/fbo/get", body)
+
+
+@mcp.tool()
+async def fbo_cancel_reason_list() -> str:
+    """Get list of cancellation reasons for FBO shipments."""
+    return await _post("/v1/posting/fbo/cancel-reason/list")
 
 
 # ── Warehouses ───────────────────────────────────────────────────────────────
@@ -598,6 +600,67 @@ async def chat_mark_read(chat_id: str) -> str:
     return await _post("/v1/chat/updates", {"chat_id": chat_id})
 
 
+# ── Questions ────────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+async def question_list(
+    status: str = "NEW",
+    sku: list[int] | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> str:
+    """List questions from buyers. Status: NEW, ANSWERED, PROCESSED, SKIPPED."""
+    body: dict = {
+        "filter": {"status": status},
+        "page": page,
+        "page_size": page_size,
+    }
+    if sku:
+        body["filter"]["sku"] = sku
+    return await _post("/v1/question/list", body)
+
+
+@mcp.tool()
+async def question_answer_list(
+    question_id: int | None = None,
+    sku: int | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> str:
+    """List answers to questions."""
+    body: dict = {
+        "page": page,
+        "page_size": page_size,
+    }
+    filt: dict = {}
+    if question_id:
+        filt["question_id"] = question_id
+    if sku:
+        filt["sku"] = sku
+    if filt:
+        body["filter"] = filt
+    return await _post("/v1/question/answer/list", body)
+
+
+@mcp.tool()
+async def question_answer(question_id: int, text: str) -> str:
+    """Send an answer to a specific question."""
+    return await _post(
+        "/v1/question/answer",
+        {"question_id": question_id, "text": text},
+    )
+
+
+@mcp.tool()
+async def question_skip(question_id: int) -> str:
+    """Skip/hide a question (e.g., spam or incorrect)."""
+    return await _post(
+        "/v1/question/skip",
+        {"question_id": question_id},
+    )
+
+
 # ── Reviews ──────────────────────────────────────────────────────────────────
 
 
@@ -631,7 +694,7 @@ async def review_reply(review_id: str, text: str) -> str:
     )
 
 
-# ── Rating ───────────────────────────────────────────────────────────────────
+# ── Rating ────────────────────────────────────────────────────────────────S
 
 
 @mcp.tool()
