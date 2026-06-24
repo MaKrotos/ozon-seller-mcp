@@ -799,13 +799,14 @@ async def inventory_analysis_report() -> str:
     inventory = {}
     for row in fbo_rows:
         sku = row["sku"]
+        warehouse = row.get("warehouse_name", "Unknown Warehouse")
         if sku not in inventory:
             inventory[sku] = {
                 "name": row.get("item_name", "Unknown"),
                 "item_code": row.get("item_code", "Unknown"),
-                "free": 0,
+                "stocks": {}, # Dictionary to store stocks per warehouse
             }
-        inventory[sku]["free"] += row.get("free_to_sell_amount", 0)
+        inventory[sku]["stocks"][warehouse] = inventory[sku]["stocks"].get(warehouse, 0) + row.get("free_to_sell_amount", 0)
 
     # 3. Calculate Recent Orders per SKU
     sku_orders_recent = {}
@@ -818,22 +819,22 @@ async def inventory_analysis_report() -> str:
 
     # 4. Generate Report
     report = []
-    report.append("--- Ozon Inventory Analysis Report ---")
-    report.append(f"{'SKU':<12} | {'Name':<30} | {'Stock (Free)':<12} | {'Recent Orders':<15} | {'Velocity (Day)':<15}")
-    report.append("-" * 100)
+    report.append("--- Ozon Inventory Analysis Report by Warehouse ---")
+    report.append(f"{'SKU':<12} | {'Name':<30} | {'Warehouse':<20} | {'Stock (Free)':<12} | {'Recent Orders':<15} | {'Velocity':<10}")
+    report.append("-" * 110)
 
     for sku, info in inventory.items():
         recent_sales = sku_orders_recent.get(sku, 0)
-        # Estimate velocity: assume the 7-day window for orders
         daily_velocity = recent_sales / 7.0 if recent_sales > 0 else 0.1
         
-        # Stock Longevity
-        longevity = info["free"] / daily_velocity if daily_velocity > 0 else float('inf')
+        total_free = sum(info["stocks"].values())
+        longevity = total_free / daily_velocity if daily_velocity > 0 else float('inf')
         
-        line = f"{sku:<12} | {info['name'][:30]:<30} | {info['free']:<12} | {recent_sales:<15} | {daily_velocity:<15.2f}"
-        report.append(line)
+        for warehouse, qty in info["stocks"].items():
+            line = f"{sku:<12} | {info['name'][:30]:<30} | {warehouse[:20]:<20} | {qty:<12} | {recent_sales:<15} | {daily_velocity:<10.2f}"
+            report.append(line)
         
-        # Recommendations
+        # Recommendations based on total stock
         if longevity < 14:
             rec = "URGENT RESTOCK"
         elif longevity < 30:
@@ -841,7 +842,8 @@ async def inventory_analysis_report() -> str:
         else:
             rec = "Sufficient"
         
-        report.append(f"   -> Longevity: {longevity:.1f} days | Recommendation: {rec}")
+        report.append(f"   -> Total Stock: {total_free} | Longevity: {longevity:.1f} days | Recommendation: {rec}")
+        report.append("-" * 110)
 
     return "\n".join(report)
 
