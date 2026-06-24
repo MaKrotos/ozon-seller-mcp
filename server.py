@@ -766,6 +766,87 @@ async def promotion_deactivate(action_id: int, product_ids: list[int]) -> str:
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
+@mcp.tool()
+async def inventory_analysis_report() -> str:
+    """
+    Perform a comprehensive inventory analysis:
+    1. Collects FBO stocks and recent FBO orders.
+    2. Calculates sales velocity (burn rate) based on recent activity.
+    3. Estimates stock longevity (days remaining).
+    4. Provides restocking recommendations (URGENT, PLAN, or Sufficient).
+    Returns a formatted text report.
+    """
+    # 1. Gather Data
+    # Stocks
+    stocks_res = await analytics_stocks(warehouse_type="FBO")
+    try:
+        stocks_data = json.loads(stocks_res)
+        fbo_rows = stocks_data.get("result", {}).get("rows", [])
+    except:
+        return "Error parsing stocks data"
+
+    # Recent Orders (Last 7 days)
+    from datetime import datetime, timedelta
+    since_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    orders_res = await fbo_posting_list(since=since_date)
+    try:
+        orders_data = json.loads(orders_res)
+        fbo_orders = orders_data.get("result", [])
+    except:
+        fbo_orders = []
+
+    # 2. Process Inventory
+    inventory = {}
+    for row in fbo_rows:
+        sku = row["sku"]
+        if sku not in inventory:
+            inventory[sku] = {
+                "name": row.get("item_name", "Unknown"),
+                "item_code": row.get("item_code", "Unknown"),
+                "free": 0,
+            }
+        inventory[sku]["free"] += row.get("free_to_sell_amount", 0)
+
+    # 3. Calculate Recent Orders per SKU
+    sku_orders_recent = {}
+    for order in fbo_orders:
+        for prod in order.get("products", []):
+            sku = prod.get("sku")
+            qty = prod.get("quantity", 0)
+            if sku:
+                sku_orders_recent[sku] = sku_orders_recent.get(sku, 0) + qty
+
+    # 4. Generate Report
+    report = []
+    report.append("--- Ozon Inventory Analysis Report ---")
+    report.append(f"{'SKU':<12} | {'Name':<30} | {'Stock (Free)':<12} | {'Recent Orders':<15} | {'Velocity (Day)':<15}")
+    report.append("-" * 100)
+
+    for sku, info in inventory.items():
+        recent_sales = sku_orders_recent.get(sku, 0)
+        # Estimate velocity: assume the 7-day window for orders
+        daily_velocity = recent_sales / 7.0 if recent_sales > 0 else 0.1
+        
+        # Stock Longevity
+        longevity = info["free"] / daily_velocity if daily_velocity > 0 else float('inf')
+        
+        line = f"{sku:<12} | {info['name'][:30]:<30} | {info['free']:<12} | {recent_sales:<15} | {daily_velocity:<15.2f}"
+        report.append(line)
+        
+        # Recommendations
+        if longevity < 14:
+            rec = "URGENT RESTOCK"
+        elif longevity < 30:
+            rec = "PLAN RESTOCK"
+        else:
+            rec = "Sufficient"
+        
+        report.append(f"   -> Longevity: {longevity:.1f} days | Recommendation: {rec}")
+
+    return "\n".join(report)
+
+
+
 def main():
     import asyncio
     asyncio.run(_run())
